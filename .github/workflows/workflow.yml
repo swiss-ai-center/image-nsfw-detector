@@ -1,0 +1,190 @@
+# Documentation: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsuses
+name: github_worflow
+run-name: GitHub Workflow
+
+env:
+  ## Common environment variables
+  # Service name (must be lowercase and not contain any spaces)
+  SERVICE_NAME: ${{ vars.SERVICE_NAME }}
+
+  ## Development environment variables
+  # The URLs of the Core Engine to which the service should connect
+  DEV_CORE_ENGINE_URLS: ${{ vars.DEV_CORE_ENGINE_URLS }}
+  # The URL that the service (dev) should be accessible at
+  DEV_SERVICE_URL: ${{ vars.DEV_SERVICE_URL }}
+  # The Kubernetes namespace that the service should be deployed to
+  DEV_NAMESPACE: ${{ vars.DEV_NAMESPACE }}
+  # Maximum number of tasks the service can accept
+  DEV_MAX_TASKS: ${{ vars.DEV_MAX_TASKS }}
+  # Number of retries on the Engine for announcement
+  DEV_ENGINE_ANNOUNCE_RETRIES: ${{ vars.DEV_ENGINE_ANNOUNCE_RETRIES }}
+  # Delay between each retry
+  DEV_ENGINE_ANNOUNCE_RETRY_DELAY: ${{ vars.DEV_ENGINE_ANNOUNCE_RETRY_DELAY }}
+  # Logging level
+  DEV_LOG_LEVEL: ${{ vars.DEV_LOG_LEVEL }}
+  # Kube configuration
+  DEV_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+
+  ## Production environment variables
+  # The URLs of the Core Engine to which the service should connect
+  PROD_CORE_ENGINE_URLS: ${{ vars.PROD_CORE_ENGINE_URLS }}
+  # The URL that the service (dev) should be accessible at
+  PROD_SERVICE_URL: ${{ vars.PROD_SERVICE_URL }}
+  # The Kubernetes namespace that the service should be deployed to
+  PROD_NAMESPACE: ${{ vars.PROD_NAMESPACE }}
+  # Maximum number of tasks the service can accept
+  PROD_MAX_TASKS: ${{ vars.PROD_MAX_TASKS }}
+  # Number of retries on the Engine for announcement
+  PROD_ENGINE_ANNOUNCE_RETRIES: ${{ vars.PROD_ENGINE_ANNOUNCE_RETRIES }}
+  # Delay between each retry
+  PROD_ENGINE_ANNOUNCE_RETRY_DELAY: ${{ vars.PROD_ENGINE_ANNOUNCE_RETRY_DELAY }}
+  # Logging level
+  PROD_LOG_LEVEL: ${{ vars.PROD_LOG_LEVEL }}
+  # Kube configuration
+  PROD_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+
+# Allow one concurrent deployment
+concurrency:
+  group: github_worflow
+  cancel-in-progress: true
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+
+  pull_request:
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    if: ${{ vars.RUN_CICD == 'true' }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Lint Python app
+        uses: swiss-ai-center/common-code/.github/actions/lint-python-app@main
+        with:
+          python-app-path: .
+
+  test:
+    needs: review
+    runs-on: ubuntu-latest
+    if: ${{ vars.RUN_CICD == 'true' }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Test Python app
+        uses: swiss-ai-center/common-code/.github/actions/test-python-app@main
+        with:
+          python-app-path: .
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ vars.RUN_CICD == 'true' && success() && (vars.DEPLOY_DEV == 'true' || vars.DEPLOY_PROD == 'true') }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Build and push Docker image to GitHub
+        id: build-and-push-docker-image-to-github
+        uses: swiss-ai-center/common-code/.github/actions/build-and-push-docker-image-to-github@main
+        with:
+          docker-registry-username: ${{ github.actor }}
+          docker-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          docker-image-name: ${{ github.repository }}
+          docker-image-context: .
+    outputs:
+      docker-image-tags: ${{ steps.build-and-push-docker-image-to-github.outputs.docker-image-tags }}
+
+  deploy-dev:
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ vars.RUN_CICD == 'true' && success() && github.ref == 'refs/heads/main' && vars.DEPLOY_DEV == 'true' }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Get service Docker image SHA tag
+        shell: bash
+        run: |
+          docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
+          docker_image_sha_tag="${docker_image_tags[1]}"
+          echo "SERVICE_DOCKER_IMAGE_SHA_TAG=$docker_image_sha_tag" >> "$GITHUB_ENV"
+
+      - name: Prepare configuration files
+        uses: swiss-ai-center/common-code/.github/actions/prepare-kubernetes-configuration-files@main
+        with:
+          service-name: ${{ env.SERVICE_NAME }}
+          service-url: ${{ env.DEV_SERVICE_URL }}
+          service-docker-image-tag: ${{ env.SERVICE_DOCKER_IMAGE_SHA_TAG }}
+          configuration-files-location: ./kubernetes
+          environment: development
+          log-level: ${{ env.DEV_LOG_LEVEL }}
+          engine-urls: ${{ env.DEV_CORE_ENGINE_URLS }}
+          max-tasks: ${{ env.DEV_MAX_TASKS }}
+          engine-announce-retries: ${{ env.DEV_ENGINE_ANNOUNCE_RETRIES }}
+          engine-announce-retry-delay: ${{ env.DEV_ENGINE_ANNOUNCE_RETRY_DELAY }}
+
+      - name: Deploy service on the Kubernetes cluster
+        uses: swiss-ai-center/common-code/.github/actions/execute-command-on-kubernetes-cluster@main
+        with:
+          kube-config: ${{ env.DEV_KUBE_CONFIG }}
+          kube-namespace: ${{ env.DEV_NAMESPACE }}
+          kubectl-context: ./kubernetes
+          kubectl-args: |
+            apply \
+              -f config-map.yml \
+              -f stateful.yml \
+              -f service.yml \
+              -f ingress.yml
+
+  deploy-prod:
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ vars.RUN_CICD == 'true' && success() && github.ref == 'refs/heads/prod' && vars.DEPLOY_PROD == 'true' }}
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+
+      - name: Get service Docker image SHA tag
+        shell: bash
+        run: |
+          docker_image_tags=(${{ needs.release.outputs.docker-image-tags }})
+          docker_image_sha_tag="${docker_image_tags[1]}"
+          echo "SERVICE_DOCKER_IMAGE_SHA_TAG=$docker_image_sha_tag" >> "$GITHUB_ENV"
+
+      - name: Prepare configuration files
+        uses: swiss-ai-center/common-code/.github/actions/prepare-kubernetes-configuration-files@main
+        with:
+          service-name: ${{ env.SERVICE_NAME }}
+          service-url: ${{ env.PROD_SERVICE_URL }}
+          service-docker-image-tag: ${{ env.SERVICE_DOCKER_IMAGE_SHA_TAG }}
+          configuration-files-location: ./kubernetes
+          environment: production
+          log-level: ${{ env.PROD_LOG_LEVEL }}
+          engine-urls: ${{ env.PROD_CORE_ENGINE_URLS }}
+          max-tasks: ${{ env.PROD_MAX_TASKS }}
+          engine-announce-retries: ${{ env.PROD_ENGINE_ANNOUNCE_RETRIES }}
+          engine-announce-retry-delay: ${{ env.PROD_ENGINE_ANNOUNCE_RETRY_DELAY }}
+
+      - name: Deploy service on the Kubernetes cluster
+        uses: swiss-ai-center/common-code/.github/actions/execute-command-on-kubernetes-cluster@main
+        with:
+          kube-config: ${{ env.PROD_KUBE_CONFIG }}
+          kube-namespace: ${{ env.PROD_NAMESPACE }}
+          kubectl-context: ./kubernetes
+          kubectl-args: |
+            apply \
+              -f config-map.yml \
+              -f stateful.yml \
+              -f service.yml \
+              -f ingress.yml

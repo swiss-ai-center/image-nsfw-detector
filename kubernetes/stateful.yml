@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: my-service-stateful
+  labels:
+    app: my-service
+spec:
+  serviceName: my-service
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-service
+  template:
+    metadata:
+      labels:
+        app: my-service
+    spec:
+      containers:
+      - name: my-service
+        image: ghcr.io/organization/my-service:latest
+        # If you build the image locally, change the next line to `imagePullPolicy: Never` - there is no need to pull the image
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 80
+        envFrom:
+          - configMapRef:
+              name: my-service-config

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-service-config
+  labels:
+    app: my-service
+data:
+  ENVIRONMENT: development
+  LOG_LEVEL: debug
+  ENGINE_URLS: '["http://core-engine-service:8080"]'
+  SERVICE_URL: http://my-service-service:9090
+  MAX_TASKS: '50'
+  ENGINE_ANNOUNCE_RETRIES: '5'
+  ENGINE_ANNOUNCE_RETRY_DELAY: '3'
