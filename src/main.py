@@ -19,29 +19,30 @@ from common_code.common.enums import FieldDescriptionType, ExecutionUnitTagName,
 from common_code.common.models import FieldDescription, ExecutionUnitTag
 
 # Imports required by the service's model
-# TODO: 1. ADD REQUIRED IMPORTS (ALSO IN THE REQUIREMENTS.TXT)
 import os
 import io
+import json
 from PIL import Image
 import numpy as np
 import tensorflow as tf
 
+# Some constants for this service
+SUB_CAT_NAMES = ['nsfw_cartoon', 'nsfw_nudity', 'nsfw_porn', 'nsfw_suggestive',
+                 'safe_cartoon', 'safe_general', 'safe_person']
+CAT_NAMES = ['nsfw', 'safe']
+IMG_SIZE = 224
+CHANNELS = 3
+N_CLASSES = len(SUB_CAT_NAMES)
+WEIGHT_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                           'model/TL_MNV2_finetune_224_B32_AD1E10-5_NSFW-V2.1_DA2.hdf5')
 
 settings = get_settings()
 
-class ImageInfo():
-    filename = None
-    img_type = None
-    img_dim_x = None
-    img_dim_y = None
-
-
 
 class MyService(Service):
-    # TODO: 2. CHANGE THIS DESCRIPTION
     """
-    Not Safe For Work (NSFW) image classification service. 
-    Caution: the current version of the service is able to detect nudity, sexual and hentai content. 
+    Not Safe For Work (NSFW) image classification service.
+    Caution: the current version of the service is able to detect nudity, sexual and hentai content.
     It is not able to detect profanity and violence for now.
     """
 
@@ -50,27 +51,14 @@ class MyService(Service):
     nsfw_model: object = Field(exclude=True)
     logger: object = Field(exclude=True)
 
-    # Some class attributes
-    SUB_CAT_NAMES = ['nsfw_cartoon', 'nsfw_nudity', 'nsfw_porn', 'nsfw_suggestive',
-                     'safe_cartoon', 'safe_general', 'safe_person']
-    CAT_NAMES = ['nsfw', 'safe']
-    IMG_SIZE = 224
-    CHANNELS = 3
-    N_CLASSES = len(SUB_CAT_NAMES)
-    WEIGHT_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)),
-                               'model/TL_MNV2_finetune_224_B32_AD1E10-5_NSFW-V2.1_DA2.hdf5')
-
-
     def __init__(self):
         super().__init__(
-            # TODO: 3. CHANGE THE SERVICE NAME AND SLUG
             name="NSFW Image Classification",
             slug="nsfw-image-classification",
             url=settings.service_url,
             summary=api_summary,
             description=api_description,
             status=ServiceStatus.AVAILABLE,
-            # TODO: 4. CHANGE THE INPUT AND OUTPUT FIELDS, THE TAGS AND THE HAS_AI VARIABLE
             data_in_fields=[
                 FieldDescription(name="image", type=[FieldDescriptionType.IMAGE_PNG, FieldDescriptionType.IMAGE_JPEG]),
             ],
@@ -89,9 +77,9 @@ class MyService(Service):
         # read the ai model here
         self.logger.info("Loading the base model...")
         self.base_model = tf.keras.applications.mobilenet_v2.MobileNetV2(
-            include_top=False, 
+            include_top=False,
             weights='imagenet',
-            input_shape=(self.IMG_SIZE, self.IMG_SIZE, self.CHANNELS))
+            input_shape=(IMG_SIZE, IMG_SIZE, CHANNELS))
         self.logger.info("Base model loaded. Recreating structure of model before loading fine-tuned weights...")
         self.nsfw_model = tf.keras.Sequential([
             self.base_model,
@@ -99,36 +87,32 @@ class MyService(Service):
             tf.keras.layers.Dense(16),
             tf.keras.layers.Dropout(0.5),
             tf.keras.layers.Activation('relu'),
-            tf.keras.layers.Dense(self.N_CLASSES),
+            tf.keras.layers.Dense(N_CLASSES),
             tf.keras.layers.Activation('softmax')
         ], name='MNV2')
-        self.logger.info('Loading weights from file: {}'.format(self.WEIGHT_FILE))
-        self.nsfw_model.load_weights(self.WEIGHT_FILE)
+        self.logger.info('Loading weights from file: {}'.format(WEIGHT_FILE))
+        self.nsfw_model.load_weights(WEIGHT_FILE)
         self.logger.info('Weights loaded.')
 
-
-    def build_score_list(self, scores, class_names):
+    def build_score_dict(self, scores, class_names):
         """
-        Build a list of Score objects (see definition above) from a numpy array of
-        float (scores) and a list of class names.
+        Build a dictionary of scores from a numpy array of float (scores) and a list of class names.
         :param scores: the numpy array of scores
         :param class_names: the list of class names to be associated to the scores
-        :return: a list of Score objects
+        :return: a dictionary of scores in the form of {'nsfw_cartoon': 0.1, 'nsfw_nudity': 0.6, ...}
         """
-        score_list = []
+        score_dict = {}
         for i, score in enumerate(scores):
-            s = (class_names[i], score)  # each score is a tuple (category_name, score)
-            score_list.append(s)
-        return score_list
-
+            score_dict[class_names[i]] = str(score)
+        return score_dict
 
     def predict_from_image(self, image_tensor):
         """
-        Compute the predicted classes from an image tensor by calling the model.predict() 
-        on that tensor. The method decides on the winning
-        category by summing the scores on the range of sub-category scores. Then it takes
-        the arg max to elect the winner of the categories and sub-categories.
-        :param image: the image from which to predict
+        Compute the predicted classes from an image tensor by calling the model.predict()
+        on that tensor. The method decides on the winning main-category by summing the 
+        scores on the range of sub-category scores. Then it takes the arg max to elect the 
+        winner of the categories and sub-categories.
+        :param image_tensor: the tensor image from which to predict
         :return: a tuple with the winner category, the winner sub-category, the list of
         category scores and the list of sub-category scores
         """
@@ -142,42 +126,42 @@ class MyService(Service):
         pred_cat[:, 1] = np.sum(pred_sub_cat[:, 4:], axis=1)  # same thing for safe
         # in the end, the pred_cat is a similar output tensor as pred_sub_cat but on 2 main categories nsfw and safe
         # let's use the first prediction for now (disregarding the fliped image)
-        scores_sub_cat = self.build_score_list(pred_sub_cat[0], self.SUB_CAT_NAMES)
-        self.logger.info("Scores sub-cat: {}".format(scores_sub_cat))
-        scores_cat = self.build_score_list(pred_cat[0], self.CAT_NAMES)
-        self.logger.info("Scores cat: {}".format(scores_cat))
+        scores_dict_sub_cat = self.build_score_dict(pred_sub_cat[0], SUB_CAT_NAMES)
+        self.logger.info("Scores sub-cat: {}".format(scores_dict_sub_cat))
+        scores_dict_cat = self.build_score_dict(pred_cat[0], CAT_NAMES)
+        self.logger.info("Scores cat: {}".format(scores_dict_cat))
         winner_sub_cat = pred_sub_cat.argmax(axis=1)[0]
         winner_cat = pred_cat.argmax(axis=1)[0]
         # get the prediction as category and subcategory
-        prediction_subcategory = self.SUB_CAT_NAMES[winner_sub_cat]
-        prediction_category = self.CAT_NAMES[winner_cat]
-        return prediction_category, prediction_subcategory, scores_cat, scores_sub_cat
+        prediction_subcategory = SUB_CAT_NAMES[winner_sub_cat]
+        prediction_category = CAT_NAMES[winner_cat]
+        return prediction_category, prediction_subcategory, scores_dict_cat, scores_dict_sub_cat
 
-
-    # TODO: 5. CHANGE THE PROCESS METHOD (CORE OF THE SERVICE)
     def process(self, data):
         # NOTE that the data is a dictionary with the keys being the field names set in the data_in_fields
         raw = data["image"].data
-        input_type = data["image"].type
         buff = io.BytesIO(raw)
         image = Image.open(buff)
-        image = image.resize((self.IMG_SIZE, self.IMG_SIZE), Image.LANCZOS)
+        image = image.resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
         image_tensor = np.array(image)
         self.logger.info("Image shape: {}".format(image_tensor.shape))
         image_tensor = tf.keras.applications.mobilenet.preprocess_input(image_tensor)
         self.logger.info("Image shape after preprocessing: {}".format(image_tensor.shape))
-        prediction_category, prediction_subcategory, scores_cat, scores_sub_cat = self.predict_from_image(image_tensor)
+        prediction_category, prediction_subcategory, scores_dict_cat, scores_dict_sub_cat = \
+            self.predict_from_image(image_tensor)
 
         # NOTE that the result must be a dictionary with the keys being the field names set in the data_out_fields
         return {
             "result": TaskData(
-                data={'prediction_category': prediction_category, 'prediction_subcategory': prediction_subcategory},
+                data=json.dumps({'prediction_category': prediction_category, 
+                                 'prediction_subcategory': prediction_subcategory,
+                                 'scores_dict_cat': scores_dict_cat,
+                                 'scores_dict_sub_cat': scores_dict_sub_cat}),
                 type=FieldDescriptionType.APPLICATION_JSON
             )
         }
 
 
-# TODO: 6. CHANGE THE API DESCRIPTION AND SUMMARY
 api_description = """
 This service detects nudity, sexual and hentai content in images, or if the image is 'safe for work'.
 """
@@ -187,11 +171,10 @@ Detects between two main categories : 'nsfw' and 'safe', and detects the followi
 """
 
 # Define the FastAPI application with information
-# TODO: 7. CHANGE THE API TITLE, VERSION, CONTACT AND LICENSE
 app = FastAPI(
-    title="Sample Service API.",
+    title="NSFW image detection service API.",
     description=api_description,
-    version="0.0.1",
+    version="0.2.1",
     contact={
         "name": "Swiss AI Center",
         "url": "https://swiss-ai-center.ch/",
