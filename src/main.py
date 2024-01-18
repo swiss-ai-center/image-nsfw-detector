@@ -109,8 +109,8 @@ class MyService(Service):
     def predict_from_image(self, image_tensor):
         """
         Compute the predicted classes from an image tensor by calling the model.predict()
-        on that tensor. The method decides on the winning main-category by summing the 
-        scores on the range of sub-category scores. Then it takes the arg max to elect the 
+        on that tensor. The method decides on the winning main-category by summing the
+        scores on the range of sub-category scores. Then it takes the arg max to elect the
         winner of the categories and sub-categories.
         :param image_tensor: the tensor image from which to predict
         :return: a tuple with the winner category, the winner sub-category, the list of
@@ -153,7 +153,7 @@ class MyService(Service):
         # NOTE that the result must be a dictionary with the keys being the field names set in the data_out_fields
         return {
             "result": TaskData(
-                data=json.dumps({'prediction_category': prediction_category, 
+                data=json.dumps({'prediction_category': prediction_category,
                                  'prediction_subcategory': prediction_subcategory,
                                  'scores_dict_cat': scores_dict_cat,
                                  'scores_dict_sub_cat': scores_dict_sub_cat}),
@@ -166,7 +166,7 @@ api_description = """
 This service detects nudity, sexual and hentai content in images, or if the image is 'safe for work'.
 """
 api_summary = """
-Detects between two main categories : 'nsfw' and 'safe', and detects the following sub-categories: 
+Detects between two main categories : 'nsfw' and 'safe', and detects the following sub-categories:
 'nsfw_cartoon', 'nsfw_nudity', 'nsfw_porn', 'nsfw_suggestive', 'safe_cartoon', 'safe_general', 'safe_person'
 """
 
