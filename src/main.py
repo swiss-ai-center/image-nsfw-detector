@@ -118,7 +118,7 @@ class MyService(Service):
         """
         image_tensor = np.array([image_tensor])
         self._logger.info("Image tensor shape: {}".format(image_tensor.shape))
-        pred_sub_cat = self.nsfw_model.predict(image_tensor, verbose=0)
+        pred_sub_cat = self._nsfw_model.predict(image_tensor, verbose=0)
         self._logger.info("Prediction shape: {}".format(pred_sub_cat.shape))
         self._logger.info("Prediction: {}".format(pred_sub_cat))
         pred_cat = np.zeros((1, 2))
