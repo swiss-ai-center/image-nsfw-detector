@@ -4,9 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from common_code.config import get_settings
-from pydantic import Field
 from common_code.http_client import HttpClient
-from common_code.logger.logger import get_logger
+from common_code.logger.logger import get_logger, Logger
 from common_code.service.controller import router as service_router
 from common_code.service.service import ServiceService
 from common_code.storage.service import StorageService
@@ -17,6 +16,7 @@ from common_code.service.models import Service
 from common_code.service.enums import ServiceStatus
 from common_code.common.enums import FieldDescriptionType, ExecutionUnitTagName, ExecutionUnitTagAcronym
 from common_code.common.models import FieldDescription, ExecutionUnitTag
+from contextlib import asynccontextmanager
 
 # Imports required by the service's model
 import os
@@ -47,9 +47,9 @@ class MyService(Service):
     """
 
     # Any additional fields must be excluded for Pydantic to work
-    base_model: object = Field(exclude=True)
-    nsfw_model: object = Field(exclude=True)
-    logger: object = Field(exclude=True)
+    _base_model: object
+    _nsfw_model: object
+    _logger: Logger
 
     def __init__(self):
         super().__init__(
@@ -73,16 +73,16 @@ class MyService(Service):
             ],
             has_ai=True,
         )
-        self.logger = get_logger(settings)
+        self._logger = get_logger(settings)
         # read the ai model here
-        self.logger.info("Loading the base model...")
-        self.base_model = tf.keras.applications.mobilenet_v2.MobileNetV2(
+        self._logger.info("Loading the base model...")
+        self._base_model = tf.keras.applications.mobilenet_v2.MobileNetV2(
             include_top=False,
             weights='imagenet',
             input_shape=(IMG_SIZE, IMG_SIZE, CHANNELS))
-        self.logger.info("Base model loaded. Recreating structure of model before loading fine-tuned weights...")
-        self.nsfw_model = tf.keras.Sequential([
-            self.base_model,
+        self._logger.info("Base model loaded. Recreating structure of model before loading fine-tuned weights...")
+        self._nsfw_model = tf.keras.Sequential([
+            self._base_model,
             tf.keras.layers.GlobalAveragePooling2D(),
             tf.keras.layers.Dense(16),
             tf.keras.layers.Dropout(0.5),
@@ -90,9 +90,9 @@ class MyService(Service):
             tf.keras.layers.Dense(N_CLASSES),
             tf.keras.layers.Activation('softmax')
         ], name='MNV2')
-        self.logger.info('Loading weights from file: {}'.format(WEIGHT_FILE))
-        self.nsfw_model.load_weights(WEIGHT_FILE)
-        self.logger.info('Weights loaded.')
+        self._logger.info('Loading weights from file: {}'.format(WEIGHT_FILE))
+        self._nsfw_model.load_weights(WEIGHT_FILE)
+        self._logger.info('Weights loaded.')
 
     def build_score_dict(self, scores, class_names):
         """
@@ -117,19 +117,19 @@ class MyService(Service):
         category scores and the list of sub-category scores
         """
         image_tensor = np.array([image_tensor])
-        self.logger.info("Image tensor shape: {}".format(image_tensor.shape))
+        self._logger.info("Image tensor shape: {}".format(image_tensor.shape))
         pred_sub_cat = self.nsfw_model.predict(image_tensor, verbose=0)
-        self.logger.info("Prediction shape: {}".format(pred_sub_cat.shape))
-        self.logger.info("Prediction: {}".format(pred_sub_cat))
+        self._logger.info("Prediction shape: {}".format(pred_sub_cat.shape))
+        self._logger.info("Prediction: {}".format(pred_sub_cat))
         pred_cat = np.zeros((1, 2))
         pred_cat[:, 0] = np.sum(pred_sub_cat[:, :4], axis=1)  # do the sum of nsfw sub-categories to compute nsfw pred
         pred_cat[:, 1] = np.sum(pred_sub_cat[:, 4:], axis=1)  # same thing for safe
         # in the end, the pred_cat is a similar output tensor as pred_sub_cat but on 2 main categories nsfw and safe
         # let's use the first prediction for now (disregarding the fliped image)
         scores_dict_sub_cat = self.build_score_dict(pred_sub_cat[0], SUB_CAT_NAMES)
-        self.logger.info("Scores sub-cat: {}".format(scores_dict_sub_cat))
+        self._logger.info("Scores sub-cat: {}".format(scores_dict_sub_cat))
         scores_dict_cat = self.build_score_dict(pred_cat[0], CAT_NAMES)
-        self.logger.info("Scores cat: {}".format(scores_dict_cat))
+        self._logger.info("Scores cat: {}".format(scores_dict_cat))
         winner_sub_cat = pred_sub_cat.argmax(axis=1)[0]
         winner_cat = pred_cat.argmax(axis=1)[0]
         # get the prediction as category and subcategory
@@ -144,9 +144,9 @@ class MyService(Service):
         image = Image.open(buff)
         image = image.resize((IMG_SIZE, IMG_SIZE), Image.LANCZOS)
         image_tensor = np.array(image)
-        self.logger.info("Image shape: {}".format(image_tensor.shape))
+        self._logger.info("Image shape: {}".format(image_tensor.shape))
         image_tensor = tf.keras.applications.mobilenet.preprocess_input(image_tensor)
-        self.logger.info("Image shape after preprocessing: {}".format(image_tensor.shape))
+        self._logger.info("Image shape after preprocessing: {}".format(image_tensor.shape))
         prediction_category, prediction_subcategory, scores_dict_cat, scores_dict_sub_cat = \
             self.predict_from_image(image_tensor)
 
@@ -162,6 +162,54 @@ class MyService(Service):
         }
 
 
+service_service: ServiceService | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Manual instances because startup events doesn't support Dependency Injection
+    # https://github.com/tiangolo/fastapi/issues/2057
+    # https://github.com/tiangolo/fastapi/issues/425
+
+    # Global variable
+    global service_service
+
+    # Startup
+    logger = get_logger(settings)
+    http_client = HttpClient()
+    storage_service = StorageService(logger)
+    my_service = MyService()
+    tasks_service = TasksService(logger, settings, http_client, storage_service)
+    service_service = ServiceService(logger, settings, http_client, tasks_service)
+
+    tasks_service.set_service(my_service)
+
+    # Start the tasks service
+    tasks_service.start()
+
+    async def announce():
+        retries = settings.engine_announce_retries
+        for engine_url in settings.engine_urls:
+            announced = False
+            while not announced and retries > 0:
+                announced = await service_service.announce_service(my_service, engine_url)
+                retries -= 1
+                if not announced:
+                    time.sleep(settings.engine_announce_retry_delay)
+                    if retries == 0:
+                        logger.warning(f"Aborting service announcement after "
+                                       f"{settings.engine_announce_retries} retries")
+
+    # Announce the service to its engine
+    asyncio.ensure_future(announce())
+
+    yield
+
+    # Shutdown
+    for engine_url in settings.engine_urls:
+        await service_service.graceful_shutdown(my_service, engine_url)
+
+
 api_description = """
 This service detects nudity, sexual and hentai content in images, or if the image is 'safe for work'.
 """
@@ -172,6 +220,7 @@ Detects between two main categories : 'nsfw' and 'safe', and detects the followi
 
 # Define the FastAPI application with information
 app = FastAPI(
+    lifespan=lifespan,
     title="NSFW image detection service API.",
     description=api_description,
     version="0.2.1",
@@ -207,52 +256,3 @@ app.add_middleware(
 @app.get("/", include_in_schema=False)
 async def root():
     return RedirectResponse("/docs", status_code=301)
-
-service_service: ServiceService | None = None
-
-
-@app.on_event("startup")
-async def startup_event():
-    # Manual instances because startup events doesn't support Dependency Injection
-    # https://github.com/tiangolo/fastapi/issues/2057
-    # https://github.com/tiangolo/fastapi/issues/425
-
-    # Global variable
-    global service_service
-
-    logger = get_logger(settings)
-    http_client = HttpClient()
-    storage_service = StorageService(logger)
-    my_service = MyService()
-    tasks_service = TasksService(logger, settings, http_client, storage_service)
-    service_service = ServiceService(logger, settings, http_client, tasks_service)
-
-    tasks_service.set_service(my_service)
-
-    # Start the tasks service
-    tasks_service.start()
-
-    async def announce():
-        retries = settings.engine_announce_retries
-        for engine_url in settings.engine_urls:
-            announced = False
-            while not announced and retries > 0:
-                announced = await service_service.announce_service(my_service, engine_url)
-                retries -= 1
-                if not announced:
-                    time.sleep(settings.engine_announce_retry_delay)
-                    if retries == 0:
-                        logger.warning(f"Aborting service announcement after "
-                                       f"{settings.engine_announce_retries} retries")
-
-    # Announce the service to its engine
-    asyncio.ensure_future(announce())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    # Global variable
-    global service_service
-    my_service = MyService()
-    for engine_url in settings.engine_urls:
-        await service_service.graceful_shutdown(my_service, engine_url)

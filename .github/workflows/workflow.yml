@@ -1,5 +1,5 @@
 # Documentation: https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsuses
-name: github_worflow
+name: github_workflow
 run-name: GitHub Workflow
 
 env:
@@ -41,11 +41,11 @@ env:
   # Logging level
   PROD_LOG_LEVEL: ${{ vars.PROD_LOG_LEVEL }}
   # Kube configuration
-  PROD_KUBE_CONFIG: ${{ secrets.DEV_KUBE_CONFIG }}
+  PROD_KUBE_CONFIG: ${{ secrets.PROD_KUBE_CONFIG }}
 
 # Allow one concurrent deployment
 concurrency:
-  group: github_worflow
+  group: github_workflow
   cancel-in-progress: true
 
 on:
@@ -89,7 +89,7 @@ jobs:
   release:
     needs: test
     runs-on: ubuntu-latest
-    if: ${{ vars.RUN_CICD == 'true' && success() && (vars.DEPLOY_DEV == 'true' || vars.DEPLOY_PROD == 'true') }}
+    if: ${{ vars.RUN_CICD == 'true' && success() && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod') && (vars.DEPLOY_DEV == 'true' || vars.DEPLOY_PROD == 'true') }}
     steps:
       - name: Clone repository
         uses: actions/checkout@v3
@@ -176,7 +176,7 @@ jobs:
           engine-announce-retries: ${{ env.PROD_ENGINE_ANNOUNCE_RETRIES }}
           engine-announce-retry-delay: ${{ env.PROD_ENGINE_ANNOUNCE_RETRY_DELAY }}
 
-      - name: Deploy service on the Kubernetes cluster
+      - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
         uses: swiss-ai-center/common-code/.github/actions/execute-command-on-kubernetes-cluster@main
         with:
           kube-config: ${{ env.PROD_KUBE_CONFIG }}
