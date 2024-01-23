@@ -53,8 +53,8 @@ class MyService(Service):
 
     def __init__(self):
         super().__init__(
-            name="NSFW Image Classification",
-            slug="nsfw-image-classification",
+            name="NSFW Image Detection",
+            slug="nsfw-image-detection",
             url=settings.service_url,
             summary=api_summary,
             description=api_description,
@@ -211,17 +211,17 @@ async def lifespan(app: FastAPI):
 
 
 api_description = """
-This service detects nudity, sexual and hentai content in images, or if the image is 'safe for work'.
-"""
-api_summary = """
 Detects between two main categories : 'nsfw' and 'safe', and detects the following sub-categories:
 'nsfw_cartoon', 'nsfw_nudity', 'nsfw_porn', 'nsfw_suggestive', 'safe_cartoon', 'safe_general', 'safe_person'
+"""
+api_summary = """
+This service detects nudity, sexual and hentai content in images, or if the image is 'safe for work'.
 """
 
 # Define the FastAPI application with information
 app = FastAPI(
     lifespan=lifespan,
-    title="NSFW image detection service API.",
+    title="NSFW Image Detection API.",
     description=api_description,
     version="0.2.1",
     contact={
