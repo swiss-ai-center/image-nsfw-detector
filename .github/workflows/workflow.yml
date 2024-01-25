@@ -176,7 +176,7 @@ jobs:
           engine-announce-retries: ${{ env.PROD_ENGINE_ANNOUNCE_RETRIES }}
           engine-announce-retry-delay: ${{ env.PROD_ENGINE_ANNOUNCE_RETRY_DELAY }}
 
-      - name: Deploy ${{ env.SERVICE_NAME }} on the Kubernetes cluster
+      - name: Deploy services on the Kubernetes cluster
         uses: swiss-ai-center/common-code/.github/actions/execute-command-on-kubernetes-cluster@main
         with:
           kube-config: ${{ env.PROD_KUBE_CONFIG }}
