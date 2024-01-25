@@ -2,7 +2,7 @@
 
 This repository contains the Python + FastAPI code to run a Core Engine service for NSFW detection. It was created from the *template to create a service without a model or from an existing model* available in the repository templates. See <https://docs.swiss-ai-center.ch/how-to-guides/how-to-create-a-new-service> and <https://docs.swiss-ai-center.ch/tutorials/implement-service/>
 
-This service takes as input an image and returns a json with information about the possibility that it includes NSFW content.
+This service takes as input an image and returns a json with information about the probability that it includes NSFW content.
 
 ## NSFW content detection
 
