@@ -1,0 +1,26 @@
+services:
+  service:
+    container_name: service
+    build:
+      context: .
+      dockerfile: development.Dockerfile
+    command: |
+      bash -c "
+        # Create the virtual environment
+        python3.10 -m venv .venv &&
+        # Activate the virtual environment
+        source .venv/bin/activate &&
+        # Install the dependencies
+        pip install -r requirements.txt -r requirements-all.txt &&
+        # Run the service
+        cd src &&
+        uvicorn --reload --host 0.0.0.0 --port 9090 main:app
+      "
+    environment:
+      - ENGINE_URLS=["http://host.docker.internal:8080"]
+      - SERVICE_URL=http://host.docker.internal:9090
+    ports:
+      - 9090:9090
+    working_dir: /workspaces/service
+    volumes:
+      - .:/workspaces/service
