@@ -1,6 +1,6 @@
 services:
   service:
-    container_name: service
+    container_name: image-nsfw-detector-service
     build:
       context: .
       dockerfile: development.Dockerfile
