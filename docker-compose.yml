@@ -17,9 +17,9 @@ services:
       "
     environment:
       - ENGINE_URLS=["http://host.docker.internal:8080"]
-      - SERVICE_URL=http://host.docker.internal:9090
+      - SERVICE_URL=http://host.docker.internal:${SERVICE_PORT}
     ports:
-      - 9090:9090
+      - ${SERVICE_PORT}:9090
     working_dir: /workspaces/service
     volumes:
       - .:/workspaces/service
