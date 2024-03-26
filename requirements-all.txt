@@ -12,7 +12,6 @@ botocore==1.34.51
 certifi==2024.2.2
 charset-normalizer==3.3.2
 click==8.1.7
-common_code @ git+https://github.com/swiss-ai-center/common-code.git@53446afc1d1cf0856cfac972d1613dd36691086b
 coverage==7.4.4
 dnspython==2.6.1
 email_validator==2.1.1
