@@ -7,6 +7,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "16m"
     nginx.org/client-max-body-size: "16m"
 spec:
+  ingressClassName: nginx
   rules:
     - host: my-service.example.com
       http:
